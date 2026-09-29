@@ -35,6 +35,18 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # State management
+  provider: ^6.1.2
+
+  # HTTP client for REST API
+  http: ^1.2.2
+
+  # Local persistence
+  shared_preferences: ^2.3.3
+
+  # Flag image caching (disk + memory)
+  cached_network_image: ^3.4.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -45,6 +57,15 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+  # Mocking for tests
+  mockito: ^5.4.4
+
+  # Code generation
+  build_runner: ^2.4.12
+
+  # Code coverage reporting
+  coverage: ^1.8.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
