@@ -112,6 +112,13 @@ class _QuizPageState extends State<QuizPage> {
             return const Center(child: CircularProgressIndicator());
           }
 
+          if (gameVM.loadError != null) {
+            return _LoadErrorView(
+              message: gameVM.loadError!,
+              onRetry: () => gameVM.retryLoad(),
+            );
+          }
+
           if (gameVM.isGameComplete) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -177,6 +184,49 @@ class _QuizPageState extends State<QuizPage> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+/// Shown when the country list could not be loaded, with a retry action.
+class _LoadErrorView extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _LoadErrorView({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.cloud_off, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text(
+              'Could not load countries',
+              style: theme.textTheme.titleLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              style: theme.textTheme.bodySmall,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
       ),
     );
   }

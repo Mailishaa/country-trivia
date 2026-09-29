@@ -101,8 +101,74 @@ void main() {
 
         expect(
           () => serviceWithMock.fetchAllCountries(),
-          throwsException,
+          throwsA(isA<CountriesApiException>()),
         );
+      });
+
+      test('throws when 200 carries a deprecated-version error envelope', () async {
+        // The live API answered 200 with this body after retiring v3.1, which
+        // a bare status check would have treated as success.
+        final mockClient = MockClient((request) async {
+          return http.Response(
+            json.encode({
+              'success': false,
+              'data': null,
+              'errors': [
+                {
+                  'message':
+                      'This API version has been deprecated. Please visit '
+                      'https://restcountries.com/docs/countries/legacy-api-deprecation',
+                },
+              ],
+            }),
+            200,
+          );
+        });
+
+        final serviceWithMock = CountryService(client: mockClient);
+
+        expect(
+          () => serviceWithMock.fetchAllCountries(),
+          throwsA(
+            isA<CountriesApiException>().having(
+              (e) => e.message,
+              'message',
+              contains('deprecated'),
+            ),
+          ),
+        );
+      });
+
+      test('throws when 200 body is an object that is not an error envelope',
+          () async {
+        final mockClient = MockClient((request) async {
+          return http.Response(json.encode({'unexpected': 'shape'}), 200);
+        });
+
+        final serviceWithMock = CountryService(client: mockClient);
+
+        expect(
+          () => serviceWithMock.fetchAllCountries(),
+          throwsA(isA<CountriesApiException>()),
+        );
+      });
+
+      test('skips non-object entries instead of crashing', () async {
+        final mockClient = MockClient((request) async {
+          return http.Response(
+            json.encode([
+              'not-an-object',
+              {'name': {'common': 'Ireland'}, 'cca2': 'IE'},
+            ]),
+            200,
+          );
+        });
+
+        final serviceWithMock = CountryService(client: mockClient);
+        final countries = await serviceWithMock.fetchAllCountries();
+
+        expect(countries.length, 1);
+        expect(countries.single.name, 'Ireland');
       });
     });
 
