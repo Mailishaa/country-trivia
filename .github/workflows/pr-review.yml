@@ -1,0 +1,143 @@
+name: OpenCode PR Review
+
+# Automatically reviews every pull request as soon as it is opened or updated,
+# using the OpenCode CLI with the Big Pickle model, and posts the result as a
+# PR comment.
+#
+# Setup instructions (API key + repository secret) are in doc/ci_setup.md.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# contents: read  -> checkout the PR
+# pull-requests: write -> post and update the review comment
+permissions:
+  contents: read
+  pull-requests: write
+
+# A new push to the PR supersedes the in-flight review.
+concurrency:
+  group: opencode-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Auto-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # Override per repository under Settings > Secrets and variables > Actions
+      # > Variables to swap models without editing this workflow.
+      OPENCODE_REVIEW_MODEL: ${{ vars.OPENCODE_REVIEW_MODEL || 'opencode/big-pickle' }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_REF: ${{ github.base_ref }}
+
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/pull/${{ github.event.pull_request.number }}/head
+
+      - name: Install the OpenCode CLI
+        run: npm install --global @opencode/cli
+
+      - name: Verify the API key secret is present
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -z "$OPENCODE_API_KEY" ]; then
+            echo "::error::The OPENCODE_API_KEY repository secret is not set."
+            echo "::error::See doc/ci_setup.md for how to create and add it."
+            exit 1
+          fi
+
+      - name: Build the pull request diff
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          git diff --no-color "origin/$BASE_REF...HEAD" > pr.diff
+
+          # Keep the diff inside a sane context budget. Big Pickle is cheap but
+          # a very large diff still slows the review and buries real findings.
+          MAX_CHARS=120000
+          SIZE=$(wc -c < pr.diff)
+          if [ "$SIZE" -gt "$MAX_CHARS" ]; then
+            echo "Diff is $SIZE bytes; truncating to $MAX_CHARS." >> pr.diff
+            head -c "$MAX_CHARS" pr.diff > pr.truncated
+            mv pr.truncated pr.diff
+          fi
+
+          echo "Diff size: $(wc -c < pr.diff) bytes"
+
+      - name: Run the review
+        id: review
+        env:
+          # --standalone gives the private server the key, which is what CI needs.
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          set -o pipefail
+          opencode run \
+            --standalone \
+            --agent pr-reviewer \
+            --model "$OPENCODE_REVIEW_MODEL" \
+            --title "PR #$PR_NUMBER review" \
+            --file pr.diff \
+            "Review the attached pull request diff. Read the surrounding code \
+             in the working tree for context before judging any change." \
+            > review.md 2> review.log || {
+              echo "::error::opencode run failed. See the log below."
+              cat review.log
+              exit 1
+            }
+
+          if [ ! -s review.md ]; then
+            echo "::error::The model returned an empty review."
+            cat review.log
+            exit 1
+          fi
+
+      - name: Publish the review comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKER: "<!-- opencode-pr-review -->"
+        run: |
+          {
+            echo "$MARKER"
+            echo "### OpenCode review (\`$OPENCODE_REVIEW_MODEL\`)"
+            echo
+            cat review.md
+            echo
+            echo "---"
+            echo "<sub>Automated review by \`$OPENCODE_REVIEW_MODEL\`. \
+          Re-run by pushing a new commit. Configure this in \`doc/ci_setup.md\`.</sub>"
+          } > comment.md
+
+          # Update the existing review comment instead of stacking a new one on
+          # every push.
+          EXISTING=$(gh api \
+            "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" \
+            --jq "[.[] | select(.body | startswith(\"$MARKER\"))] | .[0].id" \
+            2>/dev/null || true)
+
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            gh api --method PATCH \
+              "repos/${{ github.repository }}/issues/comments/$EXISTING" \
+              -F body=@comment.md >/dev/null
+            echo "Updated review comment $EXISTING."
+          else
+            gh pr comment "$PR_NUMBER" --body-file comment.md
+            echo "Posted a new review comment."
+          fi
+
+      - name: Upload the raw review and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-review-logs
+          path: |
+            review.md
+            review.log
+          retention-days: 7
+          if-no-files-found: ignore
