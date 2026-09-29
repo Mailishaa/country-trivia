@@ -7,6 +7,18 @@ import '../models/country.dart';
 import '../models/question.dart';
 import '../utils/constants.dart';
 
+/// Raised when the countries API cannot be used.
+///
+/// Carries a user-presentable [message] so the UI can show it directly.
+class CountriesApiException implements Exception {
+  final String message;
+
+  const CountriesApiException(this.message);
+
+  @override
+  String toString() => 'CountriesApiException: $message';
+}
+
 /// Service for fetching countries from the REST API and generating questions.
 class CountryService {
   final http.Client _client;
@@ -20,21 +32,51 @@ class CountryService {
 
   /// Fetches all countries from the REST Countries API.
   ///
-  /// Throws [Exception] on non-200 status codes or network errors.
+  /// Throws [CountriesApiException] on non-200 status codes, network errors,
+  /// or when the response body is not a JSON array of countries.
+  ///
+  /// The API can answer 200 with an error envelope (for example
+  /// `{"success": false, "errors": [...]}`) when a version is retired, so a
+  /// bare status check is not enough. See `kCountriesApiUrl` in constants.
   Future<List<Country>> fetchAllCountries() async {
-    final response = await _client.get(
-      Uri.parse(kCountriesApiUrl),
-    );
+    final http.Response response;
+    try {
+      response = await _client.get(Uri.parse(kCountriesApiUrl));
+    } catch (e) {
+      throw CountriesApiException('Network error: $e');
+    }
 
     if (response.statusCode != 200) {
-      throw Exception(
+      throw CountriesApiException(
         'Failed to load countries: HTTP ${response.statusCode}',
       );
     }
 
-    final List<dynamic> data = json.decode(response.body) as List<dynamic>;
-    return data
-        .map((e) => Country.fromJson(e as Map<String, dynamic>))
+    final dynamic decoded;
+    try {
+      decoded = json.decode(response.body);
+    } catch (e) {
+      throw CountriesApiException('Malformed JSON response: $e');
+    }
+
+    // Guard against error envelopes that arrive with a 200 status.
+    if (decoded is Map && decoded['success'] == false) {
+      final errors = decoded['errors'];
+      final message = errors is List && errors.isNotEmpty
+          ? (errors.first is Map ? errors.first['message'] : errors.first)
+          : 'unknown error';
+      throw CountriesApiException('API returned an error: $message');
+    }
+
+    if (decoded is! List) {
+      throw CountriesApiException(
+        'Expected a JSON array of countries, got ${decoded.runtimeType}',
+      );
+    }
+
+    return decoded
+        .whereType<Map<String, dynamic>>()
+        .map(Country.fromJson)
         .toList();
   }
 

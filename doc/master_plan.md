@@ -26,7 +26,27 @@ A Flutter mobile app that quizzes users on country flags. Each round displays a 
 
 ### 3.1 Countries API
 
-- **Source:** `https://restcountries.com/v3.1/all` (documented in the Postman collection)
+> ⚠️ **BLOCKER — v3.1 is retired.** Verified 2026-09-29: the endpoint
+> `https://restcountries.com/v3.1/all` now returns **HTTP 200** with an error
+> envelope instead of data:
+>
+> ```json
+> { "success": false, "data": null,
+>   "errors": [{ "message": "This API version has been deprecated..." }] }
+> ```
+>
+> `/v1`–`/v4` were taken down. `/v5` is the first long-term-stable version, and
+> it **requires a REST Countries account** plus an
+> `Authorization: Bearer <key>` header. It is also **not a drop-in
+> replacement**: field names and the response envelope both changed, so
+> `Country.fromJson` and the URL in `lib/utils/constants.dart` need updating
+> once a key is available.
+>
+> Until then the app cannot load a country list and the quiz cannot start.
+> The UI now shows a clear error with a Retry button rather than an endless
+> spinner. See section 18 for the migration plan.
+
+- **Source:** `https://restcountries.com/v3.1/all` (retired — migrate to v5)
 - **Fields used:** `name.common` (display name), `cca2` (ISO 3166-1 alpha-2 code for flag URL)
 - **Response:** JSON array of country objects
 - **Flag URL pattern:** `https://flagcdn.com/w320/{cca2_lowercase}.png`
@@ -782,3 +802,56 @@ void prefetchNextFlag(String isoCode) {
 - Offline mode with pre-bundled country data
 - Streak bonuses and achievements
 - Dark mode toggle
+
+---
+
+## 18. Outstanding Work — REST Countries v5 Migration
+
+The game is feature-complete and verified end to end, but it cannot load a
+country list because the upstream v3.1 endpoint was retired. Everything else in
+this plan is built, tested, and running.
+
+### 18.1 What is blocking
+
+| Item | Status | Owner action needed |
+|------|--------|---------------------|
+| REST Countries account | ❌ Missing | Sign up at <https://restcountries.com/sign-up> |
+| v5 API key | ❌ Missing | Create in the console, then add as a secret/build arg |
+| `kCountriesApiUrl` | ⛔ Points at retired v3.1 | Update to `/v5/all` |
+| `Country.fromJson` | ⛔ Parses the v3.1 shape | Remap to the v5 field names |
+| `CountryService` envelope check | ✅ Added | Understands the `{success: false}` envelope |
+
+### 18.2 Migration steps
+
+1. Create an account and API key at <https://restcountries.com/sign-up>.
+2. Point `kCountriesApiUrl` in `lib/utils/constants.dart` at `/v5/all`.
+3. Send the key. Store it as a build-time constant for now
+   (`--dart-define=REST_COUNTRIES_API_KEY=...`) so it never lands in source.
+   Move it to a server-side proxy before release — a key shipped inside a
+   mobile or web bundle is public.
+4. Read the v5 field reference at <https://restcountries.com/docs/countries>
+   and update `Country.fromJson`. Every field still exists under a new name.
+5. Keep the `{success: false}` envelope check — v5 uses it for real errors too.
+6. Re-run `flutter test` and the coverage gate; add a fixture captured from a
+   real v5 response so the parser cannot drift again.
+7. Update the mocks in `test/services/country_service_test.dart` and
+   `test/viewmodels/*` to the v5 shape.
+
+### 18.3 Interim options
+
+Until the migration lands, `lib/services/country_service.dart` is the single
+place to change. Three ways to get a playable build:
+
+- **Bundle a static country list** as an asset and read it instead of the API.
+  Removes the network dependency entirely and makes the game work offline.
+- **Proxy through your own backend** that holds the key and returns the legacy
+  array shape, so only the URL changes.
+- **Use a maintained mirror** of the v3.1 data.
+
+### 18.4 Web vs. native note
+
+On **web**, the failure surfaces as a CORS/network error
+(`ClientException: Failed to fetch`) because the v3.1 redirect target does not
+send CORS headers. On **native** platforms the request completes and the
+deprecation envelope is returned. Both paths now produce the same handled
+error state with a Retry button.

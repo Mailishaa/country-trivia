@@ -75,6 +75,67 @@ void main() {
         expect(failVM.isLoading, isFalse);
         expect(failVM.allCountries, isEmpty);
       });
+
+      test('records a load error and is not treated as game complete',
+          () async {
+        final failClient = MockClient((request) async {
+          return http.Response('Error', 500);
+        });
+        final failVM = GameViewModel(
+          countryService: CountryService(client: failClient),
+          storageService: storageService,
+        );
+
+        await failVM.initialize();
+
+        expect(failVM.loadError, isNotNull);
+        expect(failVM.isGameComplete, isFalse);
+      });
+
+      test('treats an empty country list as an error, not a finished game',
+          () async {
+        final emptyClient = MockClient((request) async {
+          return http.Response(json.encode([]), 200);
+        });
+        final emptyVM = GameViewModel(
+          countryService: CountryService(client: emptyClient),
+          storageService: storageService,
+        );
+
+        await emptyVM.initialize();
+
+        expect(emptyVM.loadError, isNotNull);
+        expect(emptyVM.isGameComplete, isFalse);
+      });
+
+      test('retryLoad clears the error after a successful fetch', () async {
+        var fail = true;
+        final flakyClient = MockClient((request) async {
+          if (fail) return http.Response('Error', 500);
+          return http.Response(
+            json.encode([
+              {'name': {'common': 'Kenya'}, 'cca2': 'KE'},
+              {'name': {'common': 'Peru'}, 'cca2': 'PE'},
+              {'name': {'common': 'Norway'}, 'cca2': 'NO'},
+              {'name': {'common': 'Cuba'}, 'cca2': 'CU'},
+            ]),
+            200,
+          );
+        });
+        final flakyVM = GameViewModel(
+          countryService: CountryService(client: flakyClient),
+          storageService: storageService,
+        );
+
+        await flakyVM.initialize();
+        expect(flakyVM.loadError, isNotNull);
+
+        fail = false;
+        await flakyVM.retryLoad();
+
+        expect(flakyVM.loadError, isNull);
+        expect(flakyVM.allCountries.length, 4);
+      });
     });
 
     group('markSolved', () {
@@ -180,6 +241,19 @@ void main() {
         }
 
         expect(viewModel.isGameComplete, isTrue);
+      });
+
+      test('false when every country was solved then the game was reset',
+          () async {
+        await viewModel.initialize();
+        for (final c in viewModel.allCountries) {
+          await viewModel.markSolved(c.isoCode, 10);
+        }
+        expect(viewModel.isGameComplete, isTrue);
+
+        await viewModel.resetGame();
+
+        expect(viewModel.isGameComplete, isFalse);
       });
     });
   });
